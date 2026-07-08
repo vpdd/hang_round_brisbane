@@ -4,7 +4,7 @@ import html
 import random
 import re
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 import pandas as pd
 import streamlit as st
@@ -13,6 +13,7 @@ import streamlit.components.v1 as components
 
 DATA_FILE = Path(__file__).with_name("weekend_database.csv")
 RESULTS_BATCH_SIZE = 20
+SOURCE_BUTTON_LIMIT = 3
 
 BUDGET_CAPS = ["Any", "Free or $", "$$ max", "$$$ allowed"]
 RAIN_FILTERS = ["Any", "Yes or maybe", "Yes only"]
@@ -75,6 +76,46 @@ TIME_GROUPS = {
     "Evening": ("evening", "night"),
     "Lunch": ("lunch",),
     "Rainy day": ("rain",),
+}
+
+BROAD_SOURCE_URLS = {
+    "https://www.queensland.com/au/en/places-to-see/destinations/brisbane",
+    "https://www.queensland.com/au/en/places-to-see/destinations/brisbane/moreton-bay",
+    "https://www.brisbane.qld.gov.au/parks-and-recreation",
+    "https://www.destinationgoldcoast.com",
+    "https://www.visitmoretonbay.com.au",
+    "https://parks.desi.qld.gov.au/parks",
+    "https://www.discoveripswich.com.au",
+    "https://www.visitscenicrim.com.au",
+    "https://www.visitsunshinecoast.com",
+    "https://www.visitredlandscoast.com.au",
+    "https://www.logan.qld.gov.au",
+    "https://visit.brisbane.qld.au/inspiration/things-to-do-with-kids-in-brisbane",
+    "https://www.moretonbay.qld.gov.au/events",
+    "https://www.qagoma.qld.gov.au",
+}
+
+SOURCE_WORD_STOPLIST = {
+    "and",
+    "the",
+    "for",
+    "from",
+    "with",
+    "precinct",
+    "alternative",
+    "alternatives",
+    "trail",
+    "route",
+    "loop",
+    "area",
+    "areas",
+    "centre",
+    "center",
+    "town",
+    "village",
+    "brisbane",
+    "queensland",
+    "australia",
 }
 
 
@@ -354,6 +395,112 @@ def compact_values(series: pd.Series, limit: int = 3) -> str:
     return " / ".join(values[:limit]) + f" +{len(values) - limit}"
 
 
+def normalize_source_url(url: object) -> str:
+    text = str(url).strip()
+    return text.rstrip("/")
+
+
+def split_source_urls(value: object) -> list[str]:
+    text = str(value).strip()
+    if not text:
+        return []
+    parts = re.split(r"\s*(?:\||\n|;)\s*", text)
+    urls: list[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        url = part.strip()
+        if not re.match(r"https?://", url, flags=re.IGNORECASE):
+            continue
+        key = normalize_source_url(url).casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        urls.append(url)
+    return urls
+
+
+def destination_terms(destination: object) -> list[str]:
+    terms = re.findall(r"[a-z0-9]+", str(destination).casefold())
+    return [term for term in terms if term not in SOURCE_WORD_STOPLIST and len(term) > 1]
+
+
+def url_matches_destination(url: str, destination: object) -> bool:
+    parsed = urlparse(url)
+    haystack = re.sub(r"[^a-z0-9]+", "", f"{parsed.netloc} {parsed.path}".casefold())
+    compact_destination = re.sub(r"[^a-z0-9]+", "", str(destination).casefold())
+    if compact_destination and compact_destination in haystack:
+        return True
+
+    terms = destination_terms(destination)
+    if not terms:
+        return False
+    matches = sum(1 for term in terms if term in haystack)
+    return matches >= min(2, len(terms))
+
+
+def is_broad_source_url(url: str, destination: object) -> bool:
+    if url_matches_destination(url, destination):
+        return False
+    return normalize_source_url(url).casefold() in BROAD_SOURCE_URLS
+
+
+def destination_search_url(row: pd.Series, columns: dict[str, str]) -> str:
+    parts = [
+        row[columns["destination"]],
+        row[columns["region"]],
+        "Queensland",
+    ]
+    query = " ".join(str(part).strip() for part in parts if str(part).strip())
+    return f"https://www.google.com/search?q={quote_plus(query)}"
+
+
+def is_generated_search_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.netloc.casefold() == "www.google.com" and parsed.path == "/search"
+
+
+def source_button_label(index: int, total: int, url: str) -> str:
+    prefix = "Search" if is_generated_search_url(url) else "Source"
+    return prefix if total == 1 else f"{prefix} {index + 1}"
+
+
+def source_urls_for_row(row: pd.Series, columns: dict[str, str], limit: int = SOURCE_BUTTON_LIMIT) -> list[str]:
+    destination = row[columns["destination"]]
+    urls = [
+        url
+        for url in split_source_urls(row[columns["source"]])
+        if not is_broad_source_url(url, destination)
+    ]
+    if not urls:
+        urls.append(destination_search_url(row, columns))
+    return urls[:limit]
+
+
+def source_urls_for_group(
+    group: pd.DataFrame,
+    columns: dict[str, str],
+    limit: int = SOURCE_BUTTON_LIMIT,
+) -> list[str]:
+    lead = group.iloc[0]
+    destination = lead[columns["destination"]]
+    urls: list[str] = []
+    seen: set[str] = set()
+    for value in group[columns["source"]]:
+        for url in split_source_urls(value):
+            if is_broad_source_url(url, destination):
+                continue
+            key = normalize_source_url(url).casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            urls.append(url)
+            if len(urls) == limit:
+                return urls
+    if not urls:
+        urls.append(destination_search_url(lead, columns))
+    return urls[:limit]
+
+
 def maps_query(row: pd.Series, columns: dict[str, str]) -> str:
     parts = [
         row[columns["destination"]],
@@ -479,7 +626,8 @@ def render_destination_group(group: pd.DataFrame, columns: dict[str, str], key_p
             if notes != "-":
                 st.write(f"Notes: {notes}")
 
-        action_columns = st.columns([1, 1, 4])
+        source_urls = source_urls_for_group(group, columns)
+        action_columns = st.columns([1, 1, 1, 1, 3])
         if is_saved:
             if action_columns[0].button("Remove", key=f"{token}_remove"):
                 remove_from_shortlist(item_id)
@@ -489,9 +637,9 @@ def render_destination_group(group: pd.DataFrame, columns: dict[str, str], key_p
                 add_to_shortlist(item_id)
                 st.rerun()
 
-        source_url = lead[columns["source"]]
-        if source_url:
-            action_columns[1].link_button("Source", source_url)
+        for index, source_url in enumerate(source_urls):
+            label = source_button_label(index, len(source_urls), source_url)
+            action_columns[index + 1].link_button(label, source_url)
 
 
 def render_css() -> None:
@@ -767,8 +915,13 @@ def main() -> None:
                 columns["adult_score"],
                 columns["source"],
             ]
+            saved_compare = saved[compare_columns].copy()
+            saved_compare[columns["source"]] = saved_compare.apply(
+                lambda row: source_urls_for_row(row, columns)[0],
+                axis=1,
+            )
             st.dataframe(
-                saved[compare_columns],
+                saved_compare,
                 use_container_width=True,
                 hide_index=True,
                 column_config={columns["source"]: st.column_config.LinkColumn("Source")},
@@ -800,6 +953,10 @@ def main() -> None:
             columns["source"],
         ]
         table = ranked[table_columns].copy()
+        table[columns["source"]] = table.apply(
+            lambda row: source_urls_for_row(row, columns)[0],
+            axis=1,
+        )
         st.dataframe(
             table,
             use_container_width=True,
