@@ -600,7 +600,7 @@ def render_back_to_top_button() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="Weekend Picker", layout="wide")
+    st.set_page_config(page_title="Hang Round Brisbane", layout="wide")
     render_css()
     st.markdown('<div id="page-top"></div>', unsafe_allow_html=True)
     render_back_to_top_button()
@@ -613,7 +613,7 @@ def main() -> None:
     df = load_data(str(DATA_FILE), DATA_FILE.stat().st_mtime)
     columns = df.attrs["columns"]
 
-    st.title("Weekend Picker")
+    st.title("Hang Round Brisbane")
     st.caption(
         f"{len(df):,} ideas from {DATA_FILE.name}."
     )
