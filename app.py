@@ -498,6 +498,9 @@ def render_css() -> None:
     st.markdown(
         """
         <style>
+        html {
+            scroll-behavior: smooth;
+        }
         .block-container {
             padding-top: 1.2rem;
             padding-left: 1rem;
@@ -554,7 +557,43 @@ def render_css() -> None:
             font-size: 0.84rem;
             margin-top: 0.12rem;
         }
+        .back-to-top {
+            position: fixed;
+            right: 1.25rem;
+            bottom: 1.25rem;
+            z-index: 100000;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 7.5rem;
+            height: 2.6rem;
+            padding: 0 0.9rem;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+            background: #ffffff;
+            color: #17202a !important;
+            font-size: 0.9rem;
+            font-weight: 650;
+            text-decoration: none !important;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.16);
+        }
+        .back-to-top:hover {
+            border-color: #94a3b8;
+            background: #f8fafc;
+        }
+        .section-gap {
+            height: 1.5rem;
+        }
         </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_back_to_top_button() -> None:
+    st.markdown(
+        """
+        <a class="back-to-top" href="#page-top">Back to top</a>
         """,
         unsafe_allow_html=True,
     )
@@ -563,6 +602,8 @@ def render_css() -> None:
 def main() -> None:
     st.set_page_config(page_title="Weekend Picker", layout="wide")
     render_css()
+    st.markdown('<div id="page-top"></div>', unsafe_allow_html=True)
+    render_back_to_top_button()
     ensure_state()
 
     if not DATA_FILE.exists():
@@ -671,7 +712,7 @@ def main() -> None:
         if st.session_state.picked_id:
             picked = df.loc[df[columns["id"]].eq(st.session_state.picked_id)]
             if not picked.empty:
-                st.subheader("Picked option")
+                st.subheader("~ Randomly Picked")
                 picked_destination = picked.iloc[0][columns["destination"]]
                 picked_group = ranked.loc[ranked[columns["destination"]].eq(picked_destination)].copy()
                 if picked_group.empty:
@@ -681,6 +722,7 @@ def main() -> None:
                         st.session_state.mode,
                     )
                 render_destination_group(picked_group, columns, "picked")
+                st.markdown('<div class="section-gap"></div>', unsafe_allow_html=True)
 
         if ranked.empty:
             st.info("No matches. Loosen the distance, budget, rain, or advanced filters.")
